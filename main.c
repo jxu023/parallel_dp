@@ -42,7 +42,7 @@ char * backtrack(int * LCS, int n, int start_stage, char * a, char * b, int i, i
 	int j = *jj;
 	char * ret = malloc(MIN(i,j)*sizeof(char));
 	int pos = 0;
-	while(i > 0) {
+	while(i > 0 && j > 0) {
 		if (a[start_stage + i-1] == b[j-1]) {
 			ret[pos++] = a[start_stage + i-1];
 			--i; --j;
@@ -137,7 +137,7 @@ int main (int argc, char *argv[])
 	srand(13);
 	int p,id;
 
-	int size = 1000;
+	int size = 100000;
 	char * a = rand_string(size);
 	char * b = rand_string(size);
 	// strlen() + 1 is used to include length 0
@@ -206,23 +206,24 @@ int main (int argc, char *argv[])
 		}
 		int predi = stages;
 		int predj = n;
+		// send it last to first
 		if (id == p-1) {
 			char * sequence = backtrack(LCS,n,first_stage,a,b,stages-1,&predj);
-			printf("id: %d backtrack:%s\n",id,sequence);
+			//printf("id: %d backtrack:%s\n",id,sequence);
 			//print_id(LCS,stages,n,id);
 			MPI_Send(&predj,1,MPI_INT,id-1,0,MPI_COMM_WORLD);
 		}
 		else if (id) {
 			MPI_Recv(&predj,1,MPI_INT,id+1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
 			char * sequence = backtrack(LCS,n,first_stage,a,b,stages-1,&predj);
-			printf("id: %d backtrack:%s\n",id,sequence);
+			//printf("id: %d backtrack:%s\n",id,sequence);
 			//print_id(LCS,stages,n,id);
 			MPI_Send(&predj,1,MPI_INT,id-1,0,MPI_COMM_WORLD);
 		}
 		else {
 			MPI_Recv(&predj,1,MPI_INT,id+1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
 			char * sequence = backtrack(LCS,n,0,a,b,stages-1,&predj);
-			printf("id: %d backtrack:%s\n",id,sequence);
+			//printf("id: %d backtrack:%s\n",id,sequence);
 			//print_id(LCS,stages,n,id);
 		}
 	}
@@ -233,13 +234,13 @@ int main (int argc, char *argv[])
 
 	elapsed_time+=MPI_Wtime();
 	if (!id) {
-		printf("%s\n",a);
-		printf("%s\n",b);
+		//printf("%s\n",a);
+		//printf("%s\n",b);
 		if (p == 1) {
 			//print(LCS,m,n);
 			printf("LCS[m,n] = %d\n",LCS[(m-1)*n + n-1]);
 			char * back = backtrack(LCS,n,first_stage,a,b,m,&n);
-			printf("lcs:%s\n",back);
+			//printf("lcs:%s\n",back);
 			free(back);
 		}
 		printf("\nelapsed_time:%f\n",elapsed_time);
