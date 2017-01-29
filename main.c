@@ -5,9 +5,11 @@
 #include <limits.h>
 #include <string.h>
 
+#define MIN(A,B) ((A < B) ? A : B)
 #define MAX(A,B) ((A > B) ? A : B)
 
 //doing threads shares resources
+	// avoids communication overhead
 
 // need INT_MIN to replace negative infinity
 // INT_MAX	+2,147,483,647
@@ -27,34 +29,66 @@ void multiply(int * matrix, int * vector)
 	// consider again for matrix vector
 }
 
-void pred_(int * LCS, int m, int n) {
-	
+void * reverse (char * s,int n) {
+	int i;
+	char temp;
+	for (i = 0; i < n/2; ++i) {
+		temp = s[i];
+		s[i] = s[n-i-1];
+		s[n-i-1] = temp;
+	}
 }
-// assumes the base cases already initialized
-// 
+char * backtrack(int * LCS, int * m, int * n, char * a, char * b) {
+	int i = *m; int j = *n;
+	int cols = j;
+	--i; --j;
+	char * ret = malloc(MIN(i,j)*sizeof(char));
+	int pos = 0;
+	// i > 0 and j > 0 is needed for parallel
+	while(i > 0 && j > 0 && LCS[i*cols+j] > 0) {
+		if (a[i-1] == b[j-1]) {
+			ret[pos++] = a[i-1];
+			--i; --j;
+		} else {
+			if (LCS[(i-1)*cols + j] > LCS[i*cols + j-1])
+				--i;
+			else
+				--j;
+		}
+	}
+	ret[pos] = '\0';
+	reverse(ret,pos);
+	*m = i; *n = j;
+	return ret;
+}
+// might want to make this inline
+void dp_stage(int * stage, int n, char a, char * b) {
+	int j;
+	for (j = 1; j < n; ++j) {
+		if (a == b[j-1]) // string is at len 1 for ind 0, matrix is at ind 0 len 0
+			stage[j] = stage[j-n-1] + 1;
+		else
+			stage[j] = MAX(stage[j-n],stage[j-1]);
+	}
+}
 void dp_seq(int * LCS, int m, int n, char * a, char * b) {
-	int i,j;
+	int i;
 	// iterate row by row, other way is negative diagonal
 	for (i = 1; i < m; ++i) {
-		for (j = 1; j < n; ++j) {
-			if (a[i-1] == b[j-1]) // string is at len 1 for ind 0, matrix is at ind 0 len 0
-				LCS[i*n + j] = LCS[(i-1)*n+j-1] + 1;
-			else
-				LCS[i*n + j] = MAX(LCS[(i-1)*n+j],LCS[i*n+j-1]);
-		}
+		dp_stage(LCS + i*n,n,a[i-1],b);
 	}
 }
 
-bool is_parallel(int * a, int * b, int n) {
+int is_parallel(int * a, int * b, int n) {
 	int i,diff,prev_diff;
-	prev_diff = a[0] - b[0]
+	prev_diff = a[0] - b[0];
 	for (i = 1; i < n; ++i) {
 		diff = a[i] - b[i];
 		if (diff != prev_diff)
-			return false;
+			return 0;
 		prev_diff = diff;
 	}
-	return true;
+	return 1;
 }
 
 void print(int * LCS, int m, int n) {
@@ -91,17 +125,21 @@ int main (int argc, char *argv[])
 	int p,id;
 
 	// could generate random strings of numbers for this too
-	char * a = rand_string(64);
-	char * b = rand_string(64);
+	int size = 10;
+	char * a = rand_string(size);
+	char * b = rand_string(size);
 	// strlen() + 1 is used to include length 0
 	int m = strlen(a)+1;
 	int n = strlen(b)+1;
-	int * LCS = (int *)calloc(m*n,sizeof(int));
 
 	MPI_Init (&argc, &argv);
 	MPI_Comm_rank (MPI_COMM_WORLD, &id);
 	MPI_Comm_size (MPI_COMM_WORLD, &p);
-	MPI_Barrier(MPI_COMM_WORLD);
+
+	int stages = m/p;
+	int * LCS = (int *)calloc(stages*n,sizeof(int));
+
+	printf("p:%d\n",p);
 
 	double elapsed_time = -MPI_Wtime();
 
@@ -109,15 +147,24 @@ int main (int argc, char *argv[])
 	if (p > 1)
 	{
 		// parallel forward phase
+		if (id)
+			insert_rand_row(LCS,n);
+		dp_seq(LCS,stages,n,a,b);
+
+		//fix up phase
 		if (!id) {
-			dp_seq(LCS,m/2,n,a,b);
+			// send the last stage
+			MPI_Send(LCS+(stages-1)*n,n,MPI_INT,p+1,0,MPI_COMM_WORLD);
+		} else if (id && id != p-1) {
+			// send then receive doesn't block since goes into buffer, otherwise does recv then send here
+			MPI_Send(LCS+(stages-1)*n,n,MPI_INT,p+1,0,MPI_COMM_WORLD);
+			int * stage = (int *)calloc(stages*n,sizeof(int));
+			MPI_Recv(stage,n,MPI_INT,p-1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
 		}
 		else {
-			insert_rand_row(LCS+(m/2)*n,n);
-			dp_seq(LCS+(m/2)*n,m/2,n,a,b);
-		}
-		//fix up phase
 
+		}
+		//MPI_Barrier(MPI_COMM_WORLD);
 	}
 	else {
 		dp_seq(LCS,m,n,a,b);
@@ -132,11 +179,15 @@ int main (int argc, char *argv[])
 			print(LCS,m,n);
 		printf("LCS[m,n] = %d\n",LCS[(m-1)*n + n-1]);
 		printf("\nelapsed_time:%f\n",elapsed_time);
+		char * sequence = backtrack(LCS,&m,&n,a,b);
+		printf("backtrack:%s",sequence);
 	}else {
-		print(LCS,m,n);
+		//print(LCS,m,n);
 	}
 
 	free(LCS);
+	free(a);
+	free(b);
 	MPI_Finalize ();
 	return 0;
 }
