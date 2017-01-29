@@ -43,7 +43,6 @@ char * backtrack(int * LCS, int n, int start_stage, char * a, char * b, int i, i
 	char * ret = malloc(MIN(i,j)*sizeof(char));
 	int pos = 0;
 	while(i > 0) {
-		printf("a[start_stage+i-1]:%c %d\n",a[start_stage+i-1],start_stage+i-1);
 		if (a[start_stage + i-1] == b[j-1]) {
 			ret[pos++] = a[start_stage + i-1];
 			--i; --j;
@@ -138,8 +137,7 @@ int main (int argc, char *argv[])
 	srand(13);
 	int p,id;
 
-	// could generate random strings of numbers for this too
-	int size = 16;
+	int size = 1000;
 	char * a = rand_string(size);
 	char * b = rand_string(size);
 	// strlen() + 1 is used to include length 0
@@ -150,14 +148,10 @@ int main (int argc, char *argv[])
 	MPI_Comm_rank (MPI_COMM_WORLD, &id);
 	MPI_Comm_size (MPI_COMM_WORLD, &p);
 
-	int stages = (m-1)/p;
-	if (!id)
-		++stages;
+	int first_stage = id*m/p;
+	int last_stage = (id+1)*m/p-1;
+	int stages = last_stage-first_stage+1;
 	int * LCS = (int *)calloc(stages*n,sizeof(int));
-	int first_stage = id*stages+1;
-	if (!id)
-		first_stage = 0;
-	int last_stage = (id+1)*stages;
 
 	if (!id)
 		printf("p:%d\n",p);
@@ -215,21 +209,21 @@ int main (int argc, char *argv[])
 		if (id == p-1) {
 			char * sequence = backtrack(LCS,n,first_stage,a,b,stages-1,&predj);
 			printf("id: %d backtrack:%s\n",id,sequence);
-			print_id(LCS,stages,n,id);
+			//print_id(LCS,stages,n,id);
 			MPI_Send(&predj,1,MPI_INT,id-1,0,MPI_COMM_WORLD);
 		}
 		else if (id) {
 			MPI_Recv(&predj,1,MPI_INT,id+1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
 			char * sequence = backtrack(LCS,n,first_stage,a,b,stages-1,&predj);
 			printf("id: %d backtrack:%s\n",id,sequence);
-			print_id(LCS,stages,n,id);
+			//print_id(LCS,stages,n,id);
 			MPI_Send(&predj,1,MPI_INT,id-1,0,MPI_COMM_WORLD);
 		}
 		else {
 			MPI_Recv(&predj,1,MPI_INT,id+1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
 			char * sequence = backtrack(LCS,n,0,a,b,stages-1,&predj);
 			printf("id: %d backtrack:%s\n",id,sequence);
-			print_id(LCS,stages,n,id);
+			//print_id(LCS,stages,n,id);
 		}
 	}
 	else {
@@ -241,9 +235,9 @@ int main (int argc, char *argv[])
 	if (!id) {
 		printf("%s\n",a);
 		printf("%s\n",b);
-		printf("LCS[m,n] = %d\n",LCS[(m-1)*n + n-1]);
 		if (p == 1) {
-			print(LCS,m,n);
+			//print(LCS,m,n);
+			printf("LCS[m,n] = %d\n",LCS[(m-1)*n + n-1]);
 			char * back = backtrack(LCS,n,first_stage,a,b,m,&n);
 			printf("lcs:%s\n",back);
 			free(back);
