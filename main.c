@@ -91,8 +91,8 @@ int main (int argc, char *argv[])
 	int p,id;
 
 	// could generate random strings of numbers for this too
-	char * a = rand_string(
-	char * b = "absdced";
+	char * a = rand_string(64);
+	char * b = rand_string(64);
 	// strlen() + 1 is used to include length 0
 	int m = strlen(a)+1;
 	int n = strlen(b)+1;
