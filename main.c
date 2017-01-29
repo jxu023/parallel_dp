@@ -38,19 +38,17 @@ void * reverse (char * s,int n) {
 		s[n-i-1] = temp;
 	}
 }
-char * backtrack(int * LCS, int * m, int * n, char * a, char * b) {
-	int i = *m; int j = *n;
-	int cols = j;
-	--i; --j;
+char * backtrack(int * LCS, int n, int start_stage, char * a, char * b, int i, int * jj) {
+	int j = *jj;
 	char * ret = malloc(MIN(i,j)*sizeof(char));
 	int pos = 0;
-	// i > 0 and j > 0 is needed for parallel
-	while(i > 0 && j > 0 && LCS[i*cols+j] > 0) {
-		if (a[i-1] == b[j-1]) {
-			ret[pos++] = a[i-1];
+	while(i > 0) {
+		printf("a[start_stage+i-1]:%c %d\n",a[start_stage+i-1],start_stage+i-1);
+		if (a[start_stage + i-1] == b[j-1]) {
+			ret[pos++] = a[start_stage + i-1];
 			--i; --j;
 		} else {
-			if (LCS[(i-1)*cols + j] > LCS[i*cols + j-1])
+			if (LCS[(i-1)*n + j] > LCS[i*n + j-1])
 				--i;
 			else
 				--j;
@@ -58,7 +56,7 @@ char * backtrack(int * LCS, int * m, int * n, char * a, char * b) {
 	}
 	ret[pos] = '\0';
 	reverse(ret,pos);
-	*m = i; *n = j;
+	*jj = j;
 	return ret;
 }
 // might want to make this inline
@@ -101,6 +99,15 @@ void print(int * LCS, int m, int n) {
 	}
 }
 
+void print_id(int * LCS, int m, int n,int id) {
+	int i,j;
+	for (i = 0; i < m; ++i) {
+		for (j = 0; j < n; ++j) {
+			printf(" %d ",LCS[i*n + j]);
+		}
+		printf("id: %d\n",id);
+	}
+}
 void insert_rand_row(int * LCS, int cols) {
 	int i;
 	for (i = 1; i < cols; ++i) {
@@ -117,6 +124,13 @@ char * rand_string(int n) {
 	return ret;
 }
 
+void * copy_array(int * a, int * b,int n) {
+	int i;
+	for (i = 0; i < n; ++i) {
+		a[i] = b[i];
+	}
+}
+
 // need a minimum of 3 processors to parallelize
 // fastest result is two iterations over array
 int main (int argc, char *argv[])
@@ -125,7 +139,7 @@ int main (int argc, char *argv[])
 	int p,id;
 
 	// could generate random strings of numbers for this too
-	int size = 10;
+	int size = 16;
 	char * a = rand_string(size);
 	char * b = rand_string(size);
 	// strlen() + 1 is used to include length 0
@@ -136,35 +150,87 @@ int main (int argc, char *argv[])
 	MPI_Comm_rank (MPI_COMM_WORLD, &id);
 	MPI_Comm_size (MPI_COMM_WORLD, &p);
 
-	int stages = m/p;
+	int stages = (m-1)/p;
+	if (!id)
+		++stages;
 	int * LCS = (int *)calloc(stages*n,sizeof(int));
+	int first_stage = id*stages+1;
+	if (!id)
+		first_stage = 0;
+	int last_stage = (id+1)*stages;
 
-	printf("p:%d\n",p);
+	if (!id)
+		printf("p:%d\n",p);
+	printf("p:%d first:%d last:%d\n",id,first_stage,last_stage);
 
 	double elapsed_time = -MPI_Wtime();
 
+	int i,j;
 	// currently assume m % 2 == 0
 	if (p > 1)
 	{
 		// parallel forward phase
 		if (id)
 			insert_rand_row(LCS,n);
-		dp_seq(LCS,stages,n,a,b);
+		for (i = 1; i < stages; ++i)
+			dp_stage(LCS + i*n,n,a[first_stage + i-1],b);
+
 
 		//fix up phase
 		if (!id) {
 			// send the last stage
-			MPI_Send(LCS+(stages-1)*n,n,MPI_INT,p+1,0,MPI_COMM_WORLD);
-		} else if (id && id != p-1) {
-			// send then receive doesn't block since goes into buffer, otherwise does recv then send here
-			MPI_Send(LCS+(stages-1)*n,n,MPI_INT,p+1,0,MPI_COMM_WORLD);
-			int * stage = (int *)calloc(stages*n,sizeof(int));
-			MPI_Recv(stage,n,MPI_INT,p-1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+			int converged = 1;
+			int all_converged = 0;
+			int iterations = 0;
+			while (!all_converged) {
+				MPI_Send(LCS+(stages-1)*n,n,MPI_INT,id+1,0,MPI_COMM_WORLD);
+				MPI_Allreduce(&converged,&all_converged,1,MPI_INT,MPI_LAND,MPI_COMM_WORLD);
+				++iterations;
+			}
+			printf("iterations:%d\n",iterations);
+		} else {
+			int * stage = (int *)calloc(2*n,sizeof(int));
+			int all_converged = 0;
+			while (!all_converged) {
+				int converged = 0;
+				// send then receive doesn't block since goes into buffer, otherwise does recv then send here
+				if (id != p-1)
+					MPI_Send(LCS+(stages-1)*n,n,MPI_INT,id+1,0,MPI_COMM_WORLD);
+				MPI_Recv(stage,n,MPI_INT,id-1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+				for (i = 0; i < stages; ++i) {
+					dp_stage(stage + n,n,a[first_stage + i-1],b);
+					if (is_parallel(stage + n, LCS + i*n,n)) {
+						converged = 1;
+						break;
+					}
+					copy_array(LCS+ i*n,stage + n,n);
+					copy_array(stage,stage + n,n);
+				}
+				MPI_Allreduce(&converged,&all_converged,1,MPI_INT,MPI_LAND,MPI_COMM_WORLD);
+			}
+			free(stage);
+		}
+		int predi = stages;
+		int predj = n;
+		if (id == p-1) {
+			char * sequence = backtrack(LCS,n,first_stage,a,b,stages-1,&predj);
+			printf("id: %d backtrack:%s\n",id,sequence);
+			print_id(LCS,stages,n,id);
+			MPI_Send(&predj,1,MPI_INT,id-1,0,MPI_COMM_WORLD);
+		}
+		else if (id) {
+			MPI_Recv(&predj,1,MPI_INT,id+1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+			char * sequence = backtrack(LCS,n,first_stage,a,b,stages-1,&predj);
+			printf("id: %d backtrack:%s\n",id,sequence);
+			print_id(LCS,stages,n,id);
+			MPI_Send(&predj,1,MPI_INT,id-1,0,MPI_COMM_WORLD);
 		}
 		else {
-
+			MPI_Recv(&predj,1,MPI_INT,id+1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+			char * sequence = backtrack(LCS,n,0,a,b,stages-1,&predj);
+			printf("id: %d backtrack:%s\n",id,sequence);
+			print_id(LCS,stages,n,id);
 		}
-		//MPI_Barrier(MPI_COMM_WORLD);
 	}
 	else {
 		dp_seq(LCS,m,n,a,b);
@@ -175,15 +241,18 @@ int main (int argc, char *argv[])
 	if (!id) {
 		printf("%s\n",a);
 		printf("%s\n",b);
-		if (p == 1)
-			print(LCS,m,n);
 		printf("LCS[m,n] = %d\n",LCS[(m-1)*n + n-1]);
+		if (p == 1) {
+			print(LCS,m,n);
+			char * back = backtrack(LCS,n,first_stage,a,b,m,&n);
+			printf("lcs:%s\n",back);
+			free(back);
+		}
 		printf("\nelapsed_time:%f\n",elapsed_time);
-		char * sequence = backtrack(LCS,&m,&n,a,b);
-		printf("backtrack:%s",sequence);
 	}else {
 		//print(LCS,m,n);
 	}
+	printf("Process %d has finished\n",id);
 
 	free(LCS);
 	free(a);
